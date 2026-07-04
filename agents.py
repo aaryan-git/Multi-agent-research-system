@@ -1,4 +1,5 @@
 from langchain.agents import create_agent
+from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -8,13 +9,25 @@ import os
 
 load_dotenv()
 
-#model setup 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-flash-latest",
-    temperature=0,
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-)
+# model setup - switches based on LLM_PROVIDER in .env
+provider = os.getenv("LLM_PROVIDER", "groq").lower()
 
+if provider == "groq":
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        temperature=0,
+        groq_api_key=os.getenv("GROQ_API_KEY"),
+    )
+elif provider == "gemini":
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-flash-latest",
+        temperature=0,
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
+    )
+else:
+    raise ValueError(f"Unknown LLM_PROVIDER: {provider}. Use 'groq' or 'gemini'.")
+
+print(f"[agents.py] Using LLM provider: {provider} ({llm.model_name if hasattr(llm, 'model_name') else llm.model})")
 
 #1st agent - Search Agent (academic sources: IEEE, arXiv, Semantic Scholar)
 def build_search_agent():
