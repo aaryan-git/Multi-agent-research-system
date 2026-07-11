@@ -29,7 +29,7 @@ def search_arxiv(query: str) -> str:
                 f"Title: {r.title}\n"
                 f"Authors: {', '.join(a.name for a in r.authors)}\n"
                 f"Published: {r.published.date()}\n"
-                f"URL: {r.pdf_url}\n"
+                f"URL: {r.pdf_url} (PDF)\n"
                 f"Abstract: {r.summary[:400]}\n"
             )
         return "\n----\n".join(out) if out else "No arXiv results found."
@@ -40,13 +40,14 @@ def search_arxiv(query: str) -> str:
 @tool
 def search_semantic(query: str) -> str:
     """Search Semantic Scholar for academic papers, including citation counts.
-    Returns Titles, URLs, citation counts, year and abstracts."""
+    Returns Titles, URLs (a direct open-access PDF link when available, otherwise
+    the abstract page), citation counts, year and abstracts."""
     try:
         headers = {"x-api-key": SEMANTIC_SCHOLAR_API_KEY} if SEMANTIC_SCHOLAR_API_KEY else {}
         params = {
             "query": query,
             "limit": 5,
-            "fields": "title,url,abstract,year,citationCount,authors",
+            "fields": "title,url,abstract,year,citationCount,authors,openAccessPdf",
         }
         resp = requests.get(
             "https://api.semanticscholar.org/graph/v1/paper/search",
@@ -56,11 +57,15 @@ def search_semantic(query: str) -> str:
         data = resp.json()
         out = []
         for p in data.get("data", []):
+            pdf_info = p.get("openAccessPdf")
+            pdf_url = pdf_info.get("url") if pdf_info else None
+            best_url = pdf_url or p.get("url")
             out.append(
                 f"Title: {p.get('title')}\n"
                 f"Year: {p.get('year')}\n"
                 f"Citations: {p.get('citationCount')}\n"
-                f"URL: {p.get('url')}\n"
+                f"URL: {best_url}"
+                f"{' (PDF)' if pdf_url else ' (abstract page, no open-access PDF)'}\n"
                 f"Abstract: {(p.get('abstract') or '')[:400]}\n"
             )
         return "\n----\n".join(out) if out else "No Semantic Scholar results found."

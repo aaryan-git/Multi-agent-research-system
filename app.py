@@ -2,6 +2,7 @@ import streamlit as st
 import time
 from agents import build_reader_agent, build_search_agent, writer_chain, critic_chain
 from xai import detect_research_gaps
+from pipeline import invoke_with_retry, invoke_agent_with_fallback  # shared rate-limit + fallback helpers
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -413,43 +414,46 @@ if st.session_state.running and not st.session_state.done:
     topic_val = st.session_state.topic_input
 
     # ── Step 1: Search (IEEE / arXiv / Semantic Scholar) ──
-    with st.spinner("🔍  Search Agent is querying IEEE, arXiv & Semantic Scholar…"):
-        search_agent = build_search_agent()
-        sr = search_agent.invoke({
-            "messages": [("user", f"Find recent, reliable and detailed academic papers about: {topic_val}")]
+    with st.spinner("🔍  Search Agent is querying IEEE, arXiv & Semantic Scholar… (auto-retries, falls back to Gemini if needed)"):
+        sr = invoke_agent_with_fallback(build_search_agent, {
+            "messages": [("user",
+                f"Find recent, reliable and detailed academic papers about: {topic_val}. "
+                f"For every paper you list, always include its full URL exactly as returned by the tools."
+            )]
         })
         results["search"] = sr["messages"][-1].content
         st.session_state.results = dict(results)
 
     # ── Step 2: Reader (PDF-first, HTML fallback) ──
-    with st.spinner("📄  Reader Agent is reading top papers…"):
-        reader_agent = build_reader_agent()
-        rr = reader_agent.invoke({
+    with st.spinner("📄  Reader Agent is reading top papers… (auto-retries, falls back to Gemini if needed)"):
+        rr = invoke_agent_with_fallback(build_reader_agent, {
             "messages": [("user",
-                f"Based on the following search results about '{topic_val}', "
-                f"pick the most relevant paper URL, read it (prefer PDF, fall back to HTML), "
-                f"and extract deeper content.\n\n"
-                f"Search Results:\n{results['search'][:800]}"
+                f"Below are academic paper search results about '{topic_val}', including URLs.\n\n"
+                f"Search Results:\n{results['search']}\n\n"
+                f"You MUST call one tool right now on one of the URLs above — do not just describe "
+                f"what you would do. If a URL is labeled '(PDF)' or ends in .pdf, call read_pdf_tool "
+                f"on it. Otherwise, call read_html_tool on it. Call the tool now, then summarize what "
+                f"it returned."
             )]
         })
         results["reader"] = rr["messages"][-1].content
         st.session_state.results = dict(results)
 
     # ── Step 3: Writer ──
-    with st.spinner("✍️  Writer is drafting the report…"):
+    with st.spinner("✍️  Writer is drafting the report… (auto-retries on rate limits)"):
         research_combined = (
             f"SEARCH RESULTS:\n{results['search']}\n\n"
             f"DETAILED PAPER CONTENT:\n{results['reader']}"
         )
-        results["writer"] = writer_chain.invoke({
+        results["writer"] = invoke_with_retry(writer_chain, {
             "topic": topic_val,
             "research": research_combined
         })
         st.session_state.results = dict(results)
 
     # ── Step 4: Critic ──
-    with st.spinner("🧐  Critic is reviewing the report…"):
-        results["critic"] = critic_chain.invoke({
+    with st.spinner("🧐  Critic is reviewing the report… (auto-retries on rate limits)"):
+        results["critic"] = invoke_with_retry(critic_chain, {
             "report": results["writer"]
         })
         st.session_state.results = dict(results)
